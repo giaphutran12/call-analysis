@@ -23,6 +23,11 @@ export class Net2PhoneService {
   }
 
   async getAccessToken(): Promise<string> {
+    // Return cached token if available
+    if (this.accessToken) {
+      return this.accessToken;
+    }
+
     try {
       const params = new URLSearchParams();
       params.append('grant_type', 'client_credentials');
@@ -34,7 +39,7 @@ export class Net2PhoneService {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: params,
+        body: params.toString(),
       });
 
       if (!response.ok) {
@@ -49,20 +54,25 @@ export class Net2PhoneService {
     }
   }
 
-  async getCallLogs(date: Date, pageSize: number = 500, minDuration: number = 10): Promise<CallLogResponse> {
+  async getCallLogs(date: string | Date, page: number = 1, pageSize: number = 100, minDuration: number = 15): Promise<CallLogResponse> {
     if (!this.accessToken) {
       this.accessToken = await this.getAccessToken();
     }
 
-    const endDate = new Date(date);
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    const endDate = new Date(dateObj);
     endDate.setUTCDate(endDate.getUTCDate() + 1);
 
     const params = new URLSearchParams({
-      start_date: date.toISOString(),
+      start_date: dateObj.toISOString(),
       end_date: endDate.toISOString(),
       page_size: pageSize.toString(),
       min_duration: minDuration.toString(),
     });
+
+    if (page > 1) {
+      params.append('page', page.toString());
+    }
 
     const response = await fetch(`${this.baseUrl}${this.callsEndpoint}?${params}`, {
       headers: {
@@ -83,34 +93,21 @@ export class Net2PhoneService {
     return calls.map(entry => {
       const from = entry.from || {};
       const to = entry.to || {};
-      const recording = from.recordings?.[0]?.url || '';
+      const recording = entry.recording?.url || '';
 
+      // Get broker_id from from_name (first 3 letters, lowercase)
       let brokerId = '';
-      if (to.user) {
-        brokerId = to.user;
-      } else if (to.value && to.value.includes('sip:') && to.value.includes('@')) {
-        const match = to.value.match(/sip:(\d+)@/);
-        if (match) {
-          brokerId = match[1];
-        }
-      } else if (from.username && from.username.includes('@')) {
-        const match = from.username.match(/(\d+)@/);
-        if (match) {
-          brokerId = match[1];
-        }
-      } else if (entry.by && entry.by.username && entry.by.username.includes('@')) {
-        const match = entry.by.username.match(/(\d+)@/);
-        if (match) {
-          brokerId = match[1];
-        }
+      const fromName = from.name || from.username || '';
+      if (fromName) {
+        brokerId = fromName.toLowerCase().substring(0, 3);
       }
 
       return {
-        call_id: from.call_id || '',
-        from_number: from.value || '',
-        to_number: to.value || '',
+        call_id: entry.call_id || '',
+        from_number: from.number || '',
+        to_number: to.number || '',
         from_username: from.username || '',
-        from_name: from.name || '',
+        from_name: fromName,
         start_time: entry.start_time || '',
         duration: entry.duration || 0,
         recording_url: recording,

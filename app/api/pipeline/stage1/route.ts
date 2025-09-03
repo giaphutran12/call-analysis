@@ -29,20 +29,49 @@ export async function POST(request: NextRequest) {
       callsEndpoint: callsEndpoint || '/v1/calls',
     });
 
-    const dates = getDateRange(new Date(startDate), new Date(endDate));
+    // Validate date range
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (start > end) {
+      return NextResponse.json(
+        { error: 'Invalid date range' },
+        { status: 400 }
+      );
+    }
+
+    const dates = getDateRange(start, end);
     const allCalls: CallRecord[] = [];
-    const results = [];
+    const dailyResults = [];
 
     for (const date of dates) {
       try {
-        const callData = await service.getCallLogs(date, pageSize, minDuration);
-        const calls = service.extractRelevantData(callData.result || []);
-        const dedupedCalls = service.deduplicateCalls(calls);
-        
-        allCalls.push(...dedupedCalls);
-        results.push({
+        let page = 1;
+        let hasMore = true;
+        const dateCalls: CallRecord[] = [];
+
+        while (hasMore) {
+          const callData = await service.getCallLogs(date, page, pageSize, minDuration);
+          const calls = service.extractRelevantData(callData.result || []);
+          const dedupedCalls = service.deduplicateCalls(calls);
+          
+          // Apply minimum duration filter
+          const filteredCalls = dedupedCalls.filter(call => call.duration >= minDuration);
+          
+          dateCalls.push(...filteredCalls);
+          
+          // Check if there are more pages
+          hasMore = callData.next ? true : false;
+          if (!hasMore || !callData.result || callData.result.length < pageSize) {
+            hasMore = false;
+          }
+          page++;
+        }
+
+        allCalls.push(...dateCalls);
+        dailyResults.push({
           date: date.toISOString().split('T')[0],
-          count: dedupedCalls.length,
+          calls: dateCalls,
+          callCount: dateCalls.length,
           status: 'success'
         });
 
@@ -51,9 +80,10 @@ export async function POST(request: NextRequest) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       } catch (error) {
-        results.push({
+        dailyResults.push({
           date: date.toISOString().split('T')[0],
-          count: 0,
+          calls: [],
+          callCount: 0,
           status: 'error',
           error: error instanceof Error ? error.message : 'Unknown error'
         });
@@ -63,9 +93,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       totalCalls: allCalls.length,
-      dateRange: { startDate, endDate },
-      results,
-      calls: allCalls
+      dailyResults,
+      allCalls,
+      // Also include fields expected by the component
+      calls: allCalls,
+      results: dailyResults,
+      dateRange: { startDate, endDate }
     });
 
   } catch (error) {
