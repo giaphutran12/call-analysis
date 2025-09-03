@@ -3,6 +3,7 @@ import { AssemblyAIService } from '@/lib/services/assemblyai';
 import { TranscriptionFile, TranscriptionProgress } from '@/lib/types/pipeline';
 import path from 'path';
 import fs from 'fs';
+import { getAssemblyAIKey } from '@/lib/config/env-validation';
 
 // Store progress for SSE
 const progressMap = new Map<string, TranscriptionProgress[]>();
@@ -12,11 +13,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { apiKey, audioFiles, concurrentLimit = 3 } = body;
 
+    // Use provided API key or fall back to environment variable
+    let finalApiKey = apiKey;
+    
     if (!apiKey) {
-      return NextResponse.json(
-        { error: 'AssemblyAI API key is required' },
-        { status: 400 }
-      );
+      try {
+        finalApiKey = getAssemblyAIKey();
+      } catch (error) {
+        return NextResponse.json(
+          { 
+            error: 'API Configuration Error',
+            message: error instanceof Error ? error.message : 'Missing AssemblyAI API key',
+            required: ['ASSEMBLYAI_API_KEY'],
+            help: 'Please provide API key in the request body or set ASSEMBLYAI_API_KEY environment variable',
+            stage: 'Stage 3 - Transcribe Audio',
+            documentation: 'https://www.assemblyai.com/docs'
+          },
+          { status: 400 }
+        );
+      }
     }
 
     if (!audioFiles || audioFiles.length === 0) {
@@ -26,11 +41,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate all filenames to prevent path traversal and enforce safe patterns
+    for (const file of audioFiles) {
+      const filename = String(file?.filename ?? '');
+      
+      // Check for valid filename pattern (alphanumeric, underscore, hyphen, dot, must end with .wav)
+      if (!filename || !/^[A-Za-z0-9._-]+\.wav$/i.test(filename)) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid filename format',
+            detail: `Filename must contain only letters, numbers, dots, underscores, hyphens and end with .wav: ${filename}`
+          },
+          { status: 400 }
+        );
+      }
+      
+      // Check for path traversal attempts
+      if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid filename - path traversal detected',
+            detail: `Filename cannot contain path separators or ".."": ${filename}`
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const sessionId = Date.now().toString();
     progressMap.set(sessionId, []);
 
     // Initialize AssemblyAI service
-    const assemblyAI = new AssemblyAIService(apiKey);
+    const assemblyAI = new AssemblyAIService(finalApiKey);
 
     // Setup directories
     const baseDir = process.cwd();
@@ -46,15 +88,17 @@ export async function POST(request: NextRequest) {
       fs.mkdirSync(rawTranscriptsDir, { recursive: true });
     }
 
-    // Prepare transcription files
+    // Prepare transcription files with sanitized filenames
     const filesToTranscribe: TranscriptionFile[] = audioFiles.map((file: any) => {
-      const parts = file.filename.replace('.wav', '').split('_');
+      // Use path.basename to ensure we only get the filename, no directory parts
+      const safeFilename = path.basename(String(file.filename));
+      const parts = safeFilename.replace(/\.wav$/i, '').split('_');
       const brokerId = parts[0];
       const callId = parts.slice(1).join('_');
       
       return {
-        filepath: path.join(audioDir, file.filename),
-        filename: file.filename,
+        filepath: path.join(audioDir, safeFilename),
+        filename: safeFilename,
         broker_id: brokerId,
         call_id: callId,
         transcriptFile: path.join(transcriptsDir, `${brokerId}_${callId}.txt`),
