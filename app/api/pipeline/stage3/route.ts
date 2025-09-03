@@ -3,6 +3,7 @@ import { AssemblyAIService } from '@/lib/services/assemblyai';
 import { TranscriptionFile, TranscriptionProgress } from '@/lib/types/pipeline';
 import path from 'path';
 import fs from 'fs';
+import { getAssemblyAIKey } from '@/lib/config/env-validation';
 
 // Store progress for SSE
 const progressMap = new Map<string, TranscriptionProgress[]>();
@@ -12,11 +13,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { apiKey, audioFiles, concurrentLimit = 3 } = body;
 
+    // Use provided API key or fall back to environment variable
+    let finalApiKey = apiKey;
+    
     if (!apiKey) {
-      return NextResponse.json(
-        { error: 'AssemblyAI API key is required' },
-        { status: 400 }
-      );
+      try {
+        finalApiKey = getAssemblyAIKey();
+      } catch (error) {
+        return NextResponse.json(
+          { 
+            error: 'API Configuration Error',
+            message: error instanceof Error ? error.message : 'Missing AssemblyAI API key',
+            required: ['ASSEMBLYAI_API_KEY'],
+            help: 'Please provide API key in the request body or set ASSEMBLYAI_API_KEY environment variable',
+            stage: 'Stage 3 - Transcribe Audio',
+            documentation: 'https://www.assemblyai.com/docs'
+          },
+          { status: 400 }
+        );
+      }
     }
 
     if (!audioFiles || audioFiles.length === 0) {
@@ -30,7 +45,7 @@ export async function POST(request: NextRequest) {
     progressMap.set(sessionId, []);
 
     // Initialize AssemblyAI service
-    const assemblyAI = new AssemblyAIService(apiKey);
+    const assemblyAI = new AssemblyAIService(finalApiKey);
 
     // Setup directories
     const baseDir = process.cwd();

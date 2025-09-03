@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Net2PhoneService } from '@/lib/services/net2phone';
 import { CallRecord } from '@/lib/types/pipeline';
+import { validateStage1Env, getNet2PhoneCredentials } from '@/lib/config/env-validation';
+import { z } from 'zod';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,16 +16,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Use provided credentials or fall back to environment variables
+    let finalClientId = clientId;
+    let finalClientSecret = clientSecret;
+
     if (!clientId || !clientSecret) {
-      return NextResponse.json(
-        { error: 'Net2Phone credentials are required' },
-        { status: 400 }
-      );
+      try {
+        // Validate and get credentials from environment
+        const envCreds = getNet2PhoneCredentials();
+        finalClientId = finalClientId || envCreds.clientId;
+        finalClientSecret = finalClientSecret || envCreds.clientSecret;
+      } catch (error) {
+        return NextResponse.json(
+          { 
+            error: 'API Configuration Error',
+            message: error instanceof Error ? error.message : 'Missing Net2Phone credentials',
+            required: ['NET2PHONE_CLIENT_ID', 'NET2PHONE_CLIENT_SECRET'],
+            help: 'Please provide credentials in the request body or set environment variables'
+          },
+          { status: 400 }
+        );
+      }
     }
 
     const service = new Net2PhoneService({
-      clientId,
-      clientSecret,
+      clientId: finalClientId,
+      clientSecret: finalClientSecret,
       baseUrl: baseUrl || 'https://api.net2phone.com',
       tokenEndpoint: tokenEndpoint || '/oauth/token',
       callsEndpoint: callsEndpoint || '/v1/calls',

@@ -19,6 +19,11 @@ export class AudioDownloadService {
   }
 
   async getAccessToken(): Promise<string> {
+    // Return cached token if available
+    if (this.accessToken) {
+      return this.accessToken;
+    }
+    
     try {
       const params = new URLSearchParams();
       params.append('grant_type', 'client_credentials');
@@ -62,6 +67,7 @@ export class AudioDownloadService {
 
       if (response.status === 401) {
         // Token expired, refresh and retry
+        this.accessToken = null;  // Clear the cached token
         this.accessToken = await this.getAccessToken();
         return this.getRecordingInfo(callId);
       }
@@ -74,12 +80,22 @@ export class AudioDownloadService {
       }
 
       const data = await response.json();
+      
+      // Check if recordings array exists and has data
+      if (!data.recordings || data.recordings.length === 0) {
+        return {
+          status: 'NotFound',
+          call_id: callId
+        };
+      }
+      
+      const recording = data.recordings[0];
       return {
-        status: data.status || 'Available',
-        url: data.url,
+        status: recording.status || 'Available',
+        url: recording.url,
         call_id: callId,
-        duration: data.duration,
-        file_size: data.file_size
+        duration: recording.duration,
+        file_size: recording.file_size
       };
     } catch (error) {
       return {
@@ -176,61 +192,105 @@ export class AudioDownloadService {
     outputDir: string,
     options?: {
       batchSize?: number;
-      delayMs?: number;
+      batchDelay?: number;
       onProgress?: (current: number, total: number, currentCall: CallRecord) => void;
       onCallProgress?: (callId: string, progress: number) => void;
-    }
-  ): Promise<Map<string, DownloadResult | null>> {
-    const results = new Map<string, DownloadResult | null>();
+    },
+    onProgress?: (current: number, total: number) => void
+  ): Promise<{
+    successful: DownloadResult[];
+    failed: { call_id: string; error: string }[];
+  }> {
+    const successful: DownloadResult[] = [];
+    const failed: { call_id: string; error: string }[] = [];
     const batchSize = options?.batchSize || 4;
-    const delayMs = options?.delayMs || 1000;
+    const batchDelay = options?.batchDelay || 1000;
 
     for (let i = 0; i < calls.length; i += batchSize) {
       const batch = calls.slice(i, Math.min(i + batchSize, calls.length));
       
       // Process batch in parallel
       const batchPromises = batch.map(async (call) => {
+        if (onProgress) {
+          onProgress(successful.length + failed.length + 1, calls.length);
+        }
         if (options?.onProgress) {
           options.onProgress(
-            results.size + 1,
+            successful.length + failed.length + 1,
             calls.length,
             call
           );
         }
 
-        const result = await this.downloadAudio(
-          call,
-          outputDir,
-          options?.onCallProgress ? (progress) => options.onCallProgress(call.call_id, progress) : undefined
-        );
-        
-        results.set(call.call_id, result);
-        return result;
+        try {
+          const result = await this.downloadAudio(
+            call,
+            outputDir,
+            options?.onCallProgress ? (progress) => options.onCallProgress(call.call_id, progress) : undefined
+          );
+          
+          if (result) {
+            successful.push(result);
+          } else {
+            failed.push({ call_id: call.call_id, error: 'Download failed' });
+          }
+        } catch (error) {
+          failed.push({ 
+            call_id: call.call_id, 
+            error: error instanceof Error ? error.message : 'Download failed' 
+          });
+        }
       });
 
       await Promise.all(batchPromises);
 
       // Add delay between batches
       if (i + batchSize < calls.length) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise(resolve => setTimeout(resolve, batchDelay));
       }
     }
 
-    return results;
+    return { successful, failed };
   }
 
-  filterCallsForDownload(calls: CallRecord[], minDuration: number = 15): CallRecord[] {
-    return calls.filter(call => {
+  filterCallsForDownload(calls: CallRecord[], minDuration: number = 15): {
+    eligible: CallRecord[];
+    skippedTooShort: number;
+    skippedNoRecording: number;
+    skippedNoCallId: number;
+  } {
+    const eligible: CallRecord[] = [];
+    let skippedTooShort = 0;
+    let skippedNoRecording = 0;
+    let skippedNoCallId = 0;
+
+    calls.forEach(call => {
       // Must have call_id
-      if (!call.call_id) return false;
+      if (!call.call_id) {
+        skippedNoCallId++;
+        return;
+      }
       
       // Must meet minimum duration
-      if (call.duration < minDuration) return false;
+      if (call.duration < minDuration) {
+        skippedTooShort++;
+        return;
+      }
       
       // Must have recording URL
-      if (!call.recording_url || !call.recording_url.trim()) return false;
+      if (!call.recording_url || !call.recording_url.trim()) {
+        skippedNoRecording++;
+        return;
+      }
       
-      return true;
+      eligible.push(call);
     });
+
+    return {
+      eligible,
+      skippedTooShort,
+      skippedNoRecording,
+      skippedNoCallId
+    };
   }
 }

@@ -3,6 +3,7 @@ import { AudioDownloadService } from '@/lib/services/audio-download';
 import { CallRecord } from '@/lib/types/pipeline';
 import path from 'path';
 import fs from 'fs';
+import { getNet2PhoneCredentials } from '@/lib/config/env-validation';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,19 +16,42 @@ export async function POST(request: NextRequest) {
       outputDir,
       minDuration = 15,
       batchSize = 4,
-      batchDelayMs = 20000
+      batchDelay = 20000
     } = body;
 
-    if (!calls || !Array.isArray(calls) || calls.length === 0) {
+    // Use provided credentials or fall back to environment variables
+    let finalClientId = clientId;
+    let finalClientSecret = clientSecret;
+
+    if (!clientId || !clientSecret) {
+      try {
+        const envCreds = getNet2PhoneCredentials();
+        finalClientId = finalClientId || envCreds.clientId;
+        finalClientSecret = finalClientSecret || envCreds.clientSecret;
+      } catch (error) {
+        return NextResponse.json(
+          { 
+            error: 'API Configuration Error',
+            message: error instanceof Error ? error.message : 'Missing Net2Phone credentials',
+            required: ['NET2PHONE_CLIENT_ID', 'NET2PHONE_CLIENT_SECRET'],
+            help: 'Please provide credentials in the request body or set environment variables',
+            stage: 'Stage 2 - Download Audio'
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (!calls || !Array.isArray(calls)) {
       return NextResponse.json(
         { error: 'Calls array is required' },
         { status: 400 }
       );
     }
 
-    if (!clientId || !clientSecret) {
+    if (calls.length === 0) {
       return NextResponse.json(
-        { error: 'Net2Phone credentials are required' },
+        { error: 'No calls provided' },
         { status: 400 }
       );
     }
@@ -39,72 +63,45 @@ export async function POST(request: NextRequest) {
     }
 
     const service = new AudioDownloadService({
-      clientId,
-      clientSecret,
+      clientId: finalClientId,
+      clientSecret: finalClientSecret,
       baseUrl
     });
 
     // Filter calls that are eligible for download
-    const eligibleCalls = service.filterCallsForDownload(calls, minDuration);
+    const filterResult = service.filterCallsForDownload(calls, minDuration);
 
     const stats = {
       totalCalls: calls.length,
-      eligibleCalls: eligibleCalls.length,
-      skippedNoRecording: 0,
-      skippedTooShort: 0,
-      skippedNoCallId: 0,
+      eligibleCalls: filterResult.eligible.length,
+      skippedNoRecording: filterResult.skippedNoRecording,
+      skippedTooShort: filterResult.skippedTooShort,
+      skippedNoCallId: filterResult.skippedNoCallId,
     };
-
-    // Calculate skip reasons
-    calls.forEach(call => {
-      if (!call.call_id) stats.skippedNoCallId++;
-      else if (call.duration < minDuration) stats.skippedTooShort++;
-      else if (!call.recording_url || !call.recording_url.trim()) stats.skippedNoRecording++;
-    });
 
     // Download the eligible calls
     const downloadResults = await service.downloadBatch(
-      eligibleCalls,
+      filterResult.eligible,
       audioOutputDir,
       {
         batchSize,
-        delayMs: batchDelayMs,
+        batchDelay,
       }
     );
 
-    // Process results
-    const successful: any[] = [];
-    const failed: any[] = [];
-
-    downloadResults.forEach((result, callId) => {
-      const call = eligibleCalls.find(c => c.call_id === callId);
-      if (result) {
-        successful.push({
-          ...call,
-          ...result
-        });
-      } else {
-        failed.push({
-          call_id: callId,
-          broker_id: call?.broker_id,
-          error: 'Download failed'
-        });
-      }
-    });
-
     return NextResponse.json({
-      success: true,
+      message: 'Audio download completed',
       stats,
       summary: {
-        attempted: eligibleCalls.length,
-        successful: successful.length,
-        failed: failed.length,
-        successRate: eligibleCalls.length > 0 
-          ? Math.round((successful.length / eligibleCalls.length) * 100) 
+        attempted: filterResult.eligible.length,
+        successful: downloadResults.successful.length,
+        failed: downloadResults.failed.length,
+        successRate: filterResult.eligible.length > 0 
+          ? Math.round((downloadResults.successful.length / filterResult.eligible.length) * 100) 
           : 0
       },
-      downloads: successful,
-      failures: failed
+      downloads: downloadResults.successful,
+      failures: downloadResults.failed
     });
 
   } catch (error) {
