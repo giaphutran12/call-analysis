@@ -36,7 +36,12 @@ interface DownloadSummary {
   successRate: number;
 }
 
-export function Stage2DownloadAudio({ calls = [] }: { calls?: CallRecord[] }) {
+interface Stage2Props {
+  calls?: CallRecord[];
+  onDownloadComplete?: (downloads: any[]) => void;
+}
+
+export function Stage2DownloadAudio({ calls = [], onDownloadComplete }: Stage2Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
@@ -102,6 +107,11 @@ export function Stage2DownloadAudio({ calls = [] }: { calls?: CallRecord[] }) {
       setFailures(data.failures || []);
       setStatus('completed');
       setProgress(100);
+      
+      // Pass downloads to next stage
+      if (onDownloadComplete && data.downloads) {
+        onDownloadComplete(data.downloads);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setStatus('error');

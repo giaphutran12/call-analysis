@@ -78,3 +78,56 @@ export interface CallLogResponse {
   count: number;
   next?: string;
 }
+
+export interface TranscriptionConfig {
+  speech_model: string;
+  speaker_labels: boolean;
+  language_code: string;
+}
+
+export interface TranscriptionUtterance {
+  start: number;
+  end: number;
+  text: string;
+  speaker: string;
+  confidence: number;
+  words?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    confidence: number;
+  }>;
+}
+
+export interface TranscriptionResult {
+  id: string;
+  status: 'queued' | 'processing' | 'completed' | 'error';
+  text?: string;
+  utterances?: TranscriptionUtterance[];
+  audio_duration?: number;
+  confidence?: number;
+  language_code?: string;
+  error?: string;
+  created?: string;
+  words?: any[];
+}
+
+export interface TranscriptionProgress {
+  call_id: string;
+  broker_id: string;
+  filename: string;
+  status: 'pending' | 'uploading' | 'transcribing' | 'completed' | 'failed';
+  progress: number;
+  transcript_id?: string;
+  error?: string;
+  duration?: number;
+}
+
+export interface TranscriptionFile {
+  filepath: string;
+  filename: string;
+  broker_id: string;
+  call_id: string;
+  transcriptFile: string;
+  rawTranscriptFile: string;
+}

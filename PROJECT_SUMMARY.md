@@ -159,13 +159,57 @@ Successfully set up modern development environment with:
 2. Create initial commit with base setup
 3. Create feature branch for Stage 1 migration
 
-### Remaining Pipeline Stages to Migrate:
-1. **Stage 3: Transcribe Audio**
-   - Integrate AssemblyAI service
-   - Create transcription queue management
-   - Add transcript viewer component
+### ✅ Stage 3: Transcribe Audio - COMPLETED
 
-3. **Stage 4: Upload Audio to Bubble**
+#### Files Created:
+1. **`/lib/services/assemblyai.ts`** - AssemblyAI service layer
+   - `AssemblyAIService` class with methods:
+     - `uploadAudio()` - Upload audio files to AssemblyAI
+     - `createTranscription()` - Create transcription job
+     - `getTranscriptionStatus()` - Poll for completion
+     - `waitForTranscription()` - Wait with timeout
+     - `transcribeFile()` - Complete transcription workflow
+     - `formatTranscript()` - Format with speaker labels and timestamps
+     - `transcribeBatch()` - Batch processing with concurrency
+
+2. **`/app/api/pipeline/stage3/route.ts`** - Next.js API route
+   - POST endpoint for batch transcription
+   - Configurable concurrency limit
+   - Progress tracking with session IDs
+   - SSE endpoint for real-time updates
+   - Automatic file filtering (skip already transcribed)
+
+3. **`/components/pipeline/stage3-transcribe-audio.tsx`** - React UI component
+   - AssemblyAI API key input
+   - Concurrent transcription settings
+   - Real-time progress bar
+   - Comprehensive statistics display
+   - Tabbed results interface:
+     - Transcripts tab with download buttons
+     - Failures tab with error details
+   - CSV export functionality
+   - Data passing to Stage 4 via callback
+
+#### Features Implemented:
+- **Batch Processing** with configurable concurrency (default: 3)
+- **Smart Upload** - Direct file upload to AssemblyAI
+- **Speaker Diarization** - Automatic speaker separation
+- **Progress Tracking** - Real-time updates via SSE
+- **Transcript Formatting**:
+  - Timestamped utterances
+  - Speaker labels (Speaker 0, Speaker 1, etc.)
+  - Raw JSON and formatted text outputs
+- **Error Recovery**:
+  - Timeout handling (5 minute default)
+  - Failed transcription reporting
+  - Retry capability
+- **File Management**:
+  - Organized output structure
+  - `/output/transcripts/` for formatted text
+  - `/output/transcripts/raw/` for JSON data
+
+### Remaining Pipeline Stages to Migrate:
+1. **Stage 4: Upload Audio to Bubble**
    - Implement Bubble.io API integration
    - Create upload progress tracking
    - Add retry mechanism for failed uploads
@@ -244,11 +288,12 @@ BUBBLE_ANALYSIS_URL=
 Successfully completed migration of:
 - **Stage 1**: Get Call IDs - Fully operational with CSV export
 - **Stage 2**: Download Audio Recordings - Batch processing with comprehensive statistics
+- **Stage 3**: Transcribe Audio - AssemblyAI integration with speaker diarization
 
-Both stages are now integrated with data flowing seamlessly between them. The application features modern UI components, full TypeScript implementation, real-time progress tracking, and detailed error handling. The foundation is solid for continuing with Stage 3 (Transcription) migration.
+All three stages are now integrated with data flowing seamlessly between them. The application features modern UI components, full TypeScript implementation, real-time progress tracking, and detailed error handling.
 
 ### Key Achievements
-- 2 of 5 pipeline stages migrated (40% complete)
+- 3 of 5 pipeline stages migrated (60% complete)
 - Full TypeScript implementation across all components
 - Modern, responsive UI with shadcn/ui components
 - Seamless data flow between stages
@@ -257,5 +302,5 @@ Both stages are now integrated with data flowing seamlessly between them. The ap
 
 ---
 
-*Last Updated: December 2, 2024*
+*Last Updated: January 2, 2025*
 *Prepared for next development session continuity*
