@@ -36,6 +36,35 @@ jest.mock('next/server', () => ({
 global.URL.createObjectURL = jest.fn(() => 'mock-url')
 global.URL.revokeObjectURL = jest.fn()
 
+// Add TextEncoder/TextDecoder for Node.js environment
+if (typeof TextEncoder === 'undefined') {
+  const { TextEncoder, TextDecoder } = require('util')
+  global.TextEncoder = TextEncoder
+  global.TextDecoder = TextDecoder
+}
+
+// Add ReadableStream if not available
+if (typeof ReadableStream === 'undefined') {
+  global.ReadableStream = class ReadableStream {
+    constructor(source) {
+      this.source = source
+      this.controller = {
+        enqueue: jest.fn(),
+        close: jest.fn(),
+      }
+      if (source && source.start) {
+        source.start(this.controller)
+      }
+    }
+    getReader() {
+      return {
+        read: jest.fn().mockResolvedValue({ done: false, value: new Uint8Array() }),
+        cancel: jest.fn(),
+      }
+    }
+  }
+}
+
 // Reset mocks before each test
 beforeEach(() => {
   jest.clearAllMocks()
