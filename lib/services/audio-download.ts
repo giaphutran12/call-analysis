@@ -130,9 +130,10 @@ export class AudioDownloadService {
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
       
-      // Create filename using first 3 chars of broker_id
-      const shortBrokerId = call.broker_id.slice(0, 3);
-      const filename = `${shortBrokerId}_${call.call_id}.wav`;
+      // Create filename using first 3 chars of broker_id with sanitization
+      const safeBrokerId = this.sanitizeSegment(call.broker_id).slice(0, 3) || 'unk';
+      const safeCallId = this.sanitizeSegment(call.call_id) || 'unknown';
+      const filename = `${safeBrokerId}_${safeCallId}.wav`;
       const filePath = path.join(outputDir, filename);
 
       // Ensure output directory exists
@@ -292,5 +293,20 @@ export class AudioDownloadService {
       skippedNoRecording,
       skippedNoCallId
     };
+  }
+
+  /**
+   * Sanitize filename segments to prevent path traversal and invalid characters
+   */
+  private sanitizeSegment(input: string): string {
+    if (!input) return '';
+    
+    // Remove any path traversal attempts and dangerous characters
+    return input
+      .replace(/\.\./g, '')           // Remove ..
+      .replace(/[\/\\]/g, '_')         // Replace path separators with _
+      .replace(/[^a-zA-Z0-9._-]/g, '_') // Keep only alphanumeric, dots, underscores, hyphens
+      .replace(/^\.+/, '')             // Remove leading dots
+      .substring(0, 100);              // Limit length to prevent overly long filenames
   }
 }

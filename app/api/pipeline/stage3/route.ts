@@ -41,6 +41,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate all filenames to prevent path traversal and enforce safe patterns
+    for (const file of audioFiles) {
+      const filename = String(file?.filename ?? '');
+      
+      // Check for valid filename pattern (alphanumeric, underscore, hyphen, dot, must end with .wav)
+      if (!filename || !/^[A-Za-z0-9._-]+\.wav$/i.test(filename)) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid filename format',
+            detail: `Filename must contain only letters, numbers, dots, underscores, hyphens and end with .wav: ${filename}`
+          },
+          { status: 400 }
+        );
+      }
+      
+      // Check for path traversal attempts
+      if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid filename - path traversal detected',
+            detail: `Filename cannot contain path separators or ".."": ${filename}`
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const sessionId = Date.now().toString();
     progressMap.set(sessionId, []);
 
@@ -61,15 +88,17 @@ export async function POST(request: NextRequest) {
       fs.mkdirSync(rawTranscriptsDir, { recursive: true });
     }
 
-    // Prepare transcription files
+    // Prepare transcription files with sanitized filenames
     const filesToTranscribe: TranscriptionFile[] = audioFiles.map((file: any) => {
-      const parts = file.filename.replace('.wav', '').split('_');
+      // Use path.basename to ensure we only get the filename, no directory parts
+      const safeFilename = path.basename(String(file.filename));
+      const parts = safeFilename.replace(/\.wav$/i, '').split('_');
       const brokerId = parts[0];
       const callId = parts.slice(1).join('_');
       
       return {
-        filepath: path.join(audioDir, file.filename),
-        filename: file.filename,
+        filepath: path.join(audioDir, safeFilename),
+        filename: safeFilename,
         broker_id: brokerId,
         call_id: callId,
         transcriptFile: path.join(transcriptsDir, `${brokerId}_${callId}.txt`),

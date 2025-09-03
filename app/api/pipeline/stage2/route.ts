@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
       calls, 
       clientId, 
       clientSecret,
-      baseUrl,
+      baseUrl: requestedBaseUrl,
       outputDir,
       minDuration = 15,
       batchSize = 4,
@@ -56,16 +56,103 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create output directory if it doesn't exist
-    const audioOutputDir = outputDir || path.join(process.cwd(), 'output', 'audio');
+    // Create output directory with security constraints
+    const baseOutputDir = path.resolve(process.cwd(), 'output', 'audio');
+    let audioOutputDir = baseOutputDir;
+    
+    // If outputDir is provided, validate it's within safe boundaries
+    if (outputDir) {
+      const requestedOutputDir = path.resolve(String(outputDir));
+      
+      // Ensure the requested directory is within our base output directory
+      if (!requestedOutputDir.startsWith(baseOutputDir)) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid output directory',
+            detail: 'Output directory must be within the output/audio folder'
+          },
+          { status: 400 }
+        );
+      }
+      
+      audioOutputDir = requestedOutputDir;
+    }
+    
+    // Create the directory if it doesn't exist
     if (!fs.existsSync(audioOutputDir)) {
       fs.mkdirSync(audioOutputDir, { recursive: true });
+    }
+
+    // Validate and sanitize baseUrl to prevent SSRF attacks
+    const defaultBaseUrl = process.env.NET2PHONE_BASE_URL || 'https://integrate.versature.com';
+    let safeBaseUrl = defaultBaseUrl;
+    
+    if (requestedBaseUrl) {
+      try {
+        const requestedUrl = new URL(String(requestedBaseUrl));
+        
+        // Define allowed hosts (whitelist approach)
+        const allowedHosts = new Set([
+          'integrate.versature.com',
+          'api.net2phone.com',
+          'api.versature.com',
+          // Only allow localhost in development
+          ...(process.env.NODE_ENV === 'development' ? ['localhost', '127.0.0.1'] : [])
+        ]);
+        
+        // Check if the host is in the allowed list
+        if (!allowedHosts.has(requestedUrl.hostname)) {
+          return NextResponse.json(
+            { 
+              error: 'Invalid base URL',
+              detail: 'The provided base URL is not in the allowed list of hosts'
+            },
+            { status: 400 }
+          );
+        }
+        
+        // Ensure HTTPS in production (allow HTTP only for localhost in dev)
+        if (process.env.NODE_ENV === 'production' && requestedUrl.protocol !== 'https:') {
+          return NextResponse.json(
+            { 
+              error: 'Invalid base URL',
+              detail: 'HTTPS is required for production environments'
+            },
+            { status: 400 }
+          );
+        }
+        
+        // Block potential SSRF targets
+        const blockedPorts = [22, 3306, 5432, 6379, 27017, 9200]; // SSH, MySQL, PostgreSQL, Redis, MongoDB, Elasticsearch
+        if (blockedPorts.includes(parseInt(requestedUrl.port))) {
+          return NextResponse.json(
+            { 
+              error: 'Invalid base URL',
+              detail: 'Access to this port is not allowed'
+            },
+            { status: 400 }
+          );
+        }
+        
+        // If all checks pass, use the requested URL (without trailing slash)
+        safeBaseUrl = requestedUrl.toString().replace(/\/$/, '');
+        
+      } catch (error) {
+        // If URL parsing fails, reject the request
+        return NextResponse.json(
+          { 
+            error: 'Invalid base URL',
+            detail: 'The provided base URL is malformed'
+          },
+          { status: 400 }
+        );
+      }
     }
 
     const service = new AudioDownloadService({
       clientId: finalClientId,
       clientSecret: finalClientSecret,
-      baseUrl
+      baseUrl: safeBaseUrl
     });
 
     // Filter calls that are eligible for download
